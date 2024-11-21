@@ -732,6 +732,10 @@ TRACE FX call mul from test_logging.py:N in fn (LoggingTests.test_trace_call_pre
         self.assertGreater(len(records), 0)
         self.assertLess(len(records), 3)
 
+    @make_logging_test(graph_region_expansion=True)
+    def test_graph_region_expansion(self, records):
+        pass
+
     @skipIfTorchDynamo("too slow")
     @make_logging_test(**torch._logging.DEFAULT_LOGGING)
     def test_default_logging(self, records):

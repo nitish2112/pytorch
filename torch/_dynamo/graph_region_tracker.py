@@ -2,12 +2,21 @@ import math
 from collections import defaultdict, deque
 from typing import Any, Callable, Deque, Dict, List, Optional, Set, Tuple
 
+import torch._logging
 import torch.fx
 
 
 Node = torch.fx.Node
 Region = List[Node]
 IdenticalNodes = List[Node]
+
+graph_expansion_log = torch._logging.getArtifactLogger(
+    __name__, "graph_region_expansion"
+)
+
+
+def debug_log(msg: str, *args) -> None:  # type: ignore[no-untyped-def]
+    graph_expansion_log.debug(msg, *args)
 
 
 # This is typical BFS with the caveat
@@ -116,6 +125,9 @@ def fully_expand_region_group(
     seen_nodes: Set[Node],
     has_same_loc_fn: Callable[[Node, Node], bool],
 ) -> None:
+    debug_log("--------------------------------------------------")
+    debug_log("expanding new region group: %s", regions)
+
     # All regions should start with 1 node
     assert all(len(region) == 1 for region in regions)
     region_iters = []
@@ -145,7 +157,12 @@ def fully_expand_region_group(
         for region_it in region_iters[1:]:
             arg_name, node = region_it.next()
 
+            debug_log("--------------------")
+            debug_log("considering adding: %s, cur_node: %s", node, current_node)
+            debug_log("previously claimed nodes: %s", node in seen_nodes)
+            debug_log("%s", seen_nodes)
             if node:
+                debug_log("has_same_loc: %s", has_same_loc_fn(node, current_node))
                 add_node &= (
                     current_arg_name == arg_name
                     and node not in seen_nodes
@@ -156,9 +173,13 @@ def fully_expand_region_group(
             else:
                 add_node = False
 
+            debug_log("--------------------")
+
         if add_node:
             for region, region_it, node in zip(regions, region_iters, nodes_to_add):
                 region.append(node)
+                debug_log("adding %s's children", node)
+                debug_log("%s %s", node.args, list(node.kwargs.items()))
                 region_it.add_children(node)
 
         current_arg_name, current_node = region_iters[0].next()
@@ -166,3 +187,6 @@ def fully_expand_region_group(
     # Ensure regions are sorted in topological order
     for region in regions:
         region.reverse()
+
+    debug_log("end expand new region group: %s", regions)
+    debug_log("--------------------------------------------------")
