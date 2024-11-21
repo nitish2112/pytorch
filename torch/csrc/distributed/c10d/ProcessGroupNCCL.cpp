@@ -476,10 +476,11 @@ ProcessGroupNCCL::WorkNCCL::WorkNCCL(
   // DEFAULT_FLAGS = cudaEventDisableTiming.
   if (cudaEventCacheEnabled) {
     ncclStartEvent_ = enableTiming
-        ? ProcessGroupNCCL::CUDAEventCache::get().create(enableTiming)
+        ? ProcessGroupNCCL::CUDAEventCache::get(device.index())
+              .create(enableTiming)
         : nullptr;
-    ncclEndEvent_ =
-        ProcessGroupNCCL::CUDAEventCache::get().create(enableTiming);
+    ncclEndEvent_ = ProcessGroupNCCL::CUDAEventCache::get(device.index())
+                        .create(enableTiming);
   } else {
     ncclStartEvent_ = enableTiming
         ? std::make_shared<at::cuda::CUDAEvent>(cudaEventDefault)
@@ -798,6 +799,12 @@ void ProcessGroupNCCL::WorkNCCL::abort() {
 
 ProcessGroupNCCL::CUDAEventCache::CUDAEventCache() = default;
 
+ProcessGroupNCCL::CUDAEventCache::CUDAEventCache(
+    CUDAEventCache&& cache) noexcept = default;
+
+ProcessGroupNCCL::CUDAEventCache& ProcessGroupNCCL::CUDAEventCache::
+    CUDAEventCache::operator=(CUDAEventCache&& cache) noexcept = default;
+
 // CUDA event is used to record the start/end of one Work.
 // Instead of let the CUDA event gets destroyed, we now reuse it after the Work
 // has been erased from workMetaList_.
@@ -806,14 +813,14 @@ std::shared_ptr<at::cuda::CUDAEvent> ProcessGroupNCCL::CUDAEventCache::create(
     bool timing) {
   // register the deleter as a callback when the WorkNCCL object is destroyed.
   auto deleter = [this, timing](at::cuda::CUDAEvent* event) {
-    std::lock_guard<std::mutex> lock(this->cacheMutex_);
+    std::lock_guard<std::mutex> lock(*cacheMutexPtr_);
     // We put the event back to the cache deque once the WorkNCCL object is
     // destroyed.
-    this->eventsArray_[timing ? 1 : 0].push_back(event);
+    eventsArray_[timing ? 1 : 0].push_back(event);
   };
   at::cuda::CUDAEvent* event = nullptr;
   {
-    std::lock_guard<std::mutex> lock(cacheMutex_);
+    std::lock_guard<std::mutex> lock(*cacheMutexPtr_);
     auto& events = eventsArray_[timing ? 1 : 0];
     // If we still have events in the cache, we reuse it. Otherwise, we create a
     // new one.
@@ -828,10 +835,15 @@ std::shared_ptr<at::cuda::CUDAEvent> ProcessGroupNCCL::CUDAEventCache::create(
   return std::shared_ptr<at::cuda::CUDAEvent>(event, std::move(deleter));
 }
 
-ProcessGroupNCCL::CUDAEventCache& ProcessGroupNCCL::CUDAEventCache::get() {
-  // Return a singleton instance of CUDAEventCache.
-  static ProcessGroupNCCL::CUDAEventCache cache;
-  return cache;
+ProcessGroupNCCL::CUDAEventCache& ProcessGroupNCCL::CUDAEventCache::get(
+    at::DeviceIndex device) {
+  // Return a singleton map instance of <device index, CUDAEventCache>.
+  static std::unordered_map<at::DeviceIndex, ProcessGroupNCCL::CUDAEventCache>
+      cacheDevice;
+  if (cacheDevice.find(device) == cacheDevice.end()) {
+    cacheDevice.emplace(device, ProcessGroupNCCL::CUDAEventCache());
+  }
+  return cacheDevice[device];
 }
 
 static std::atomic<size_t> process_group_id = 0;
@@ -885,7 +897,7 @@ ProcessGroupNCCL::ProcessGroupNCCL(
   enableNanCheck_ = getCvarBool(TORCH_NCCL_NAN_CHECK, false);
   heartbeat_ = 1ULL;
   monitorThreadEnabled_.store(getCvarBool(TORCH_NCCL_ENABLE_MONITORING, true));
-  cudaEventCacheEnabled_.store(getCvarBool(TORCH_NCCL_CUDA_EVENT_CACHE, false));
+  cudaEventCacheEnabled_.store(getCvarBool(TORCH_NCCL_CUDA_EVENT_CACHE, true));
   heartbeatTimeoutInSec_ =
       getCvarInt(TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC, 60 * 8 /*8 Mins*/);
   waitTimeoutDumpInMilSec_ =
