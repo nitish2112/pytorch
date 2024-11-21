@@ -830,14 +830,18 @@ def skip_if_gpu_halide(fn):
     return wrapper
 
 
-def skip_if_cpp_wrapper(fn):
-    @functools.wraps(fn)
-    def wrapper(self):
-        if config.cpp_wrapper:
-            raise unittest.SkipTest("cpp wrapper bug to be fixed")
-        return fn(self)
+class skip_if_cpp_wrapper:
+    def __init__(self, reason: str = "") -> None:
+        self.reason = reason
 
-    return wrapper
+    def __call__(self, fn):
+        @functools.wraps(fn)
+        def wrapper(test_self):
+            if config.cpp_wrapper:
+                raise unittest.SkipTest(f"cpp wrapper bug to be fixed: {self.reason}")
+            return fn(test_self)
+
+        return wrapper
 
 
 @instantiate_parametrized_tests
@@ -8141,7 +8145,10 @@ class CommonTemplate:
             self.assertEqual(cloned_args, args)
 
     @config.patch(implicit_fallbacks=True)
-    @skip_if_cpp_wrapper
+    @skip_if_cpp_wrapper(
+        "Without major redesign, cpp_wrapper will not support custom ops that are "
+        "defined in Python."
+    )
     def test_fallback_mutable_op_list(self):
         with torch.library._scoped_library("mylib", "FRAGMENT") as m:
 
@@ -9537,9 +9544,9 @@ class CommonTemplate:
         for x in (torch.randn(2, 3), torch.randn(2, 2), torch.randn(3, 2)):
             self.common(fn, (x,))
 
-    # cpp_wrapper cannot currently handle fallback ops with return types containing
-    # list[Tensor], which will eventually need to get fixed.
-    @skip_if_cpp_wrapper
+    @skip_if_cpp_wrapper(
+        "cannot currently handle fallback ops with return types containing list[Tensor]"
+    )
     def test_kwargs(self):
         if self.device == GPU_TYPE:
             raise unittest.SkipTest("histogramdd only supports cpu")
@@ -10997,7 +11004,10 @@ class CommonTemplate:
 
     @requires_gpu()
     @config.patch(implicit_fallbacks=True)
-    @skip_if_cpp_wrapper
+    @skip_if_cpp_wrapper(
+        "Without major redesign, cpp_wrapper will not support custom ops that are "
+        "defined in Python."
+    )
     @tf32_on_and_off(0.005)
     def test_mutable_custom_op_fixed_layout2(self):
         with torch.library._scoped_library("mylib", "DEF") as lib:
@@ -11053,7 +11063,10 @@ class CommonTemplate:
                 self.assertNotEqual(bar_strides[0], expected_stride)
 
     @config.patch(implicit_fallbacks=True)
-    @skip_if_cpp_wrapper
+    @skip_if_cpp_wrapper(
+        "Without major redesign, cpp_wrapper will not support custom ops that are "
+        "defined in Python."
+    )
     def test_mutable_custom_op_fixed_layout(self):
         with torch.library._scoped_library("mylib", "DEF") as lib:
             lib.define(
